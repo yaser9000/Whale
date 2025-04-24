@@ -1,46 +1,68 @@
-async function fetchData() {
-  const container = document.getElementById("cardsContainer");
-  container.innerHTML = "جاري التحميل...";
+const excluded = ['USDT', 'BUSD', 'TUSD', 'USDC'];
 
-  try {
-    const response = await fetch("https://api.binance.com/api/v3/ticker/24hr");
-    const data = await response.json();
+async function fetchTopCoins() {
+  const container = document.getElementById('coins');
+  container.innerHTML = "جارٍ التحميل...";
+  
+  const res = await fetch("https://api.binance.com/api/v3/ticker/24hr");
+  const allCoins = await res.json();
 
-    const filtered = data
-      .filter(item =>
-        item.symbol.endsWith("USDT") &&
-        !item.symbol.includes("BUSD") &&
-        !item.symbol.includes("USDC") &&
-        parseFloat(item.priceChangePercent) >= 4
-      )
-      .slice(0, 12); // عرض أول 12 عملة فقط كتجربة
+  const topCoins = allCoins
+    .filter(c => !excluded.some(stable => c.symbol.endsWith(stable)))
+    .sort((a, b) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+    .slice(0, 60);
 
-    container.innerHTML = "";
+  let results = [];
 
-    filtered.forEach(item => {
-      const card = document.createElement("div");
-      card.className = "card";
+  for (let coin of topCoins) {
+    const symbol = coin.symbol;
+    const priceChange = parseFloat(coin.priceChangePercent);
 
-      const change = parseFloat(item.priceChangePercent).toFixed(2);
-      const volumeValue = parseFloat(item.quoteVolume).toFixed(2);
-      const volumePercent = Math.min(100, Math.log10(volumeValue + 1) * 20);
+    try {
+      const klinesRes = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=8`);
+      const klines = await klinesRes.json();
 
-      card.innerHTML = `
-        <div class="symbol">${item.symbol}</div>
-        <div class="change">+${change}%</div>
-        <div class="label rsi true">RSI: —</div>
-        <div class="label macd true">MACD: —</div>
-        <div class="label vol true">Volume: ${volumeValue}</div>
-        <div class="volume-bar"><span style="width:${volumePercent}%; background-color:${volumePercent > 70 ? '#00e676' : volumePercent > 40 ? '#ffc107' : '#f44336'}"></span></div>
-      `;
+      if (!Array.isArray(klines) || klines.length < 8) continue;
 
-      container.appendChild(card);
-    });
+      const currentCandle = klines[7];
+      const prevVolumes = klines.slice(0, 7).map(k => parseFloat(k[5]));
+      const avgVolume = prevVolumes.reduce((a, b) => a + b, 0) / 7;
+      const currentVolume = parseFloat(currentCandle[5]);
+      const volumeJump = ((currentVolume - avgVolume) / avgVolume) * 100;
 
-  } catch (error) {
-    container.innerHTML = "حدث خطأ أثناء جلب البيانات.";
-    console.error(error);
+      const open = parseFloat(currentCandle[1]);
+      const close = parseFloat(currentCandle[4]);
+      const change = ((close - open) / open) * 100;
+
+      if (change > 5 && volumeJump > 150) {
+        results.push({
+          symbol,
+          change: change.toFixed(2),
+          volumeJump: volumeJump.toFixed(1),
+          volume: currentVolume.toLocaleString()
+        });
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  container.innerHTML = '';
+
+  if (results.length === 0) {
+    container.innerHTML = "<p>لا توجد عملات تحقق الشروط الآن.</p>";
+    return;
+  }
+
+  for (let coin of results) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <h2>${coin.symbol}</h2>
+      <div class="metric">الارتفاع الساعي: <strong class="green">+${coin.change}%</strong></div>
+      <div class="metric">زيادة السيولة: <strong>${coin.volumeJump}%</strong></div>
+      <div class="metric">الحجم: ${coin.volume}</div>
+    `;
+    container.appendChild(card);
   }
 }
-
-window.onload = fetchData;
